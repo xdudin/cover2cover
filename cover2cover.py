@@ -192,8 +192,10 @@ if __name__ == '__main__':
     filename = sys.argv[1]
     source_roots = sys.argv[2:][0].split('\n') if 2 < len(sys.argv) else '.'
 
-    changed_class_files = os.popen("git --no-pager diff master --name-only '*.java' |" +
-                                   "xargs -n1 basename | " +
-                                   "sed 's/\\..*//'").read().splitlines()
+    changed_class_files = os.popen(
+        "git --no-pager diff " +
+        "origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME..origin/$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME " +
+        "--name-only '*.java' | xargs -n1 basename | sed 's/\\..*//'"
+    ).read().splitlines()
 
     jacoco2cobertura(filename, source_roots)
