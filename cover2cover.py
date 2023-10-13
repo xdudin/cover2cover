@@ -190,7 +190,7 @@ if __name__ == '__main__':
         sys.exit(1)
 
     filename = sys.argv[1]
-    source_roots = sys.argv[2:] if 2 < len(sys.argv) else '.'
+    source_roots = sys.argv[2:][0].split('\n') if 2 < len(sys.argv) else '.'
 
     changed_class_files = os.popen("git --no-pager diff master --name-only '*.java' |" +
                                    "xargs -n1 basename | " +
