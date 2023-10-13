@@ -4,6 +4,8 @@ import xml.etree.ElementTree as ET
 import re
 import os.path
 
+changed_class_files = []
+
 
 # branch-rate="0.0" complexity="0.0" line-rate="1.0"
 # branch="true" hits="1" number="86"
@@ -131,7 +133,9 @@ def convert_package(j_package):
 
     c_classes = ET.SubElement(c_package, 'classes')
     for j_class in j_package.findall('class'):
-        c_classes.append(convert_class(j_class, j_package))
+        file_name = guess_filename(j_class.attrib['name'])
+        if file_name in changed_class_files:
+            c_classes.append(convert_class(j_class, j_package))
 
     add_counters(j_package, c_package)
 
@@ -168,9 +172,11 @@ def jacoco2cobertura(filename, source_roots):
 
 
 if __name__ == '__main__':
-    if len(sys.argv) < 2:
+    if len(sys.argv) < 3:
         print("Usage: cover2cover.py FILENAME [SOURCE_ROOTS]")
         sys.exit(1)
+
+    changed_class_files = os.popen("git --no-pager diff master --name-only '*.java'").read().splitlines()
 
     filename = sys.argv[1]
     source_roots = sys.argv[2:] if 2 < len(sys.argv) else '.'
