@@ -1,23 +1,18 @@
 #!/usr/bin/env python
-import sys
-import xml.etree.ElementTree as ET
-import re
 import os.path
+import sys
+import time
+import xml.etree.ElementTree as ET
 
 changed_class_files = []
 
-
-# branch-rate="0.0" complexity="0.0" line-rate="1.0"
-# branch="true" hits="1" number="86"
-
-# noinspection PyShadowingNames, SpellCheckingInspection
-def find_lines(j_package, filename):
+def find_lines(j_package, filename): # noqa
     """Return all <line> elements for a given source file in a package."""
     lines = list()
-    sourcefiles = j_package.findall("sourcefile")
-    for sourcefile in sourcefiles:
-        if sourcefile.attrib.get("name") == os.path.basename(filename):
-            lines = lines + sourcefile.findall("line")
+    sources = j_package.findall("sourcefile")
+    for source in sources:
+        if source.attrib.get("name") == os.path.basename(filename):
+            lines = lines + source.findall("line")
     return lines
 
 
@@ -63,9 +58,8 @@ def convert_lines(j_lines, into):
             cline.set('branch', 'false')
 
 
-def guess_filename(path_to_class):
-    m = re.match('([^$]*)', path_to_class)
-    return (m.group(1) if m else path_to_class) + '.java'
+def path_to_filepath(path_to_class, source_filename):
+    return path_to_class[0: path_to_class.rfind("/") + 1] + source_filename
 
 
 def add_counters(source, target):
@@ -75,6 +69,8 @@ def add_counters(source, target):
 
 
 def fraction(covered, missed):
+    if not covered:
+        return 0.0
     return covered / (covered + missed)
 
 
@@ -111,7 +107,11 @@ def convert_method(j_method, j_lines):
 def convert_class(j_class, j_package):
     c_class = ET.Element('class')
     c_class.set('name', j_class.attrib['name'].replace('/', '.'))
-    c_class.set('filename', guess_filename(j_class.attrib['name']))
+    # sourcefilename is optional, required for multi-module maven/gradle builds
+    if 'sourcefilename' in j_class.attrib:
+        c_class.set('filename', path_to_filepath(j_class.attrib['name'], j_class.attrib['sourcefilename']))
+    else:
+        c_class.set('filename', path_to_filepath(j_class.attrib['name'], j_class.attrib['name']))
 
     all_j_lines = list(find_lines(j_package, c_class.attrib['filename']))
 
@@ -133,8 +133,15 @@ def convert_package(j_package):
 
     c_classes = ET.SubElement(c_package, 'classes')
     for j_class in j_package.findall('class'):
-        file_name = guess_filename(j_class.attrib['name'])
-        if file_name in changed_class_files:
+
+        file_name = path_to_filepath(j_class.attrib['name'], j_class.attrib['sourcefilename']) \
+            if 'sourcefilename' in j_class.attrib \
+            else path_to_filepath(j_class.attrib['name'], j_class.attrib['name'])
+
+        file_name = file_name.split('/')[-1].split('.')[-2]
+        class_name = j_class.attrib['name'].replace('/', '.')
+
+        if file_name in changed_class_files and 'AjcClosure' not in class_name:
             c_classes.append(convert_class(j_class, j_package))
 
     add_counters(j_package, c_package)
@@ -142,23 +149,29 @@ def convert_package(j_package):
     return c_package
 
 
-# noinspection PyShadowingNames
-def convert_root(source, target, source_roots):
-    target.set('timestamp', str(int(source.find('sessioninfo').attrib['start']) / 1000))
-
+# noinspection PyShadowingBuiltins
+def convert_root(source, target, source_roots): # noqa
+    try:
+        target.set('timestamp', str(int(source.find('sessioninfo').attrib['start']) / 1000))
+    except AttributeError as e:
+        target.set('timestamp', str(int(time.time() / 1000)))
     sources = ET.SubElement(target, 'sources')
     for s in source_roots:
         ET.SubElement(sources, 'source').text = s
 
     packages = ET.SubElement(target, 'packages')
+
+    for group in source.findall('group'):
+        for package in group.findall('package'):
+            packages.append(convert_package(package))
+
     for package in source.findall('package'):
         packages.append(convert_package(package))
 
     add_counters(source, target)
 
 
-# noinspection PyShadowingNames
-def jacoco2cobertura(filename, source_roots):
+def jacoco2cobertura(filename, source_roots): # noqa
     if filename == '-':
         root = ET.fromstring(sys.stdin.read())
     else:
@@ -168,17 +181,19 @@ def jacoco2cobertura(filename, source_roots):
     into = ET.Element('coverage')
     convert_root(root, into, source_roots)
     print('<?xml version="1.0" ?>')
-    print(ET.tostring(into))
+    print(ET.tostring(into, encoding='unicode'))
 
 
 if __name__ == '__main__':
-    if len(sys.argv) < 3:
+    if len(sys.argv) < 2:
         print("Usage: cover2cover.py FILENAME [SOURCE_ROOTS]")
         sys.exit(1)
 
-    changed_class_files = os.popen("git --no-pager diff master --name-only '*.java'").read().splitlines()
-
     filename = sys.argv[1]
     source_roots = sys.argv[2:] if 2 < len(sys.argv) else '.'
+
+    changed_class_files = os.popen("git --no-pager diff master --name-only '*.java' |" +
+                                   "xargs -n1 basename | " +
+                                   "sed 's/\\..*//'").read().splitlines()
 
     jacoco2cobertura(filename, source_roots)
